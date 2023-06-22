@@ -351,6 +351,9 @@ class LSHSelfAttention(nn.Module, EfficientAttentionMixin):
         self.query_key = nn.Linear(self.hidden_size, self.all_head_size, bias=False)
         self.value = nn.Linear(self.hidden_size, self.all_head_size, bias=False)
 
+        # Tree attention
+        self.whether_use_tree_attention = config.whether_use_tree_attention
+
         # save mask value here. Need fp32 and fp16 mask values
         self.register_buffer("self_mask_value_float16", torch.tensor(-1e3))
         self.register_buffer("self_mask_value_float32", torch.tensor(-1e5))
@@ -482,59 +485,61 @@ class LSHSelfAttention(nn.Module, EfficientAttentionMixin):
             sorted_bucket_idx, undo_sorted_bucket_idx = self._get_sorted_bucket_idx_and_undo_sorted_bucket_idx(
                 sequence_length, buckets, num_hashes
             )
+            if self.whether_use_tree_attention:
+                buckets_per_hash = buckets % self.num_buckets 
+                # 使用 one-hot encoding 来创建一个 mask，它的形状与 query_key_vectors 和 value_vectors 相同，
+                # 并且在每个桶中的位置为 1，在其他位置为 0,todo:下面这个有问题
+                buckets_one_hot = nn.functional.one_hot(buckets, num_classes=buckets.max().item() + 1).to(torch.float32)  # shape: (batch_size, num_attention_heads, num_hashes, seq_len, num_buckets)
 
-            buckets_per_hash = buckets % self.num_buckets 
-            # 使用 one-hot encoding 来创建一个 mask，它的形状与 query_key_vectors 和 value_vectors 相同，
-            # 并且在每个桶中的位置为 1，在其他位置为 0,todo:下面这个有问题
-            buckets_one_hot = nn.functional.one_hot(buckets, num_classes=buckets.max().item() + 1).to(torch.float32)  # shape: (batch_size, num_attention_heads, num_hashes, seq_len, num_buckets)
-
-            # 使用 mask 来选择每个桶中的向量，并计算它们的和
-            buckets_for_scatter =  buckets_per_hash.reshape(batch_size, self.num_attention_heads, num_hashes, sequence_length).unsqueeze(-1).expand(-1,-1,-1,-1,self.attention_head_size) # shape: (batch_size, num_attention_heads, num_hashes , seq_len, attention_head_size)
-            query_key_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=query_key_vectors.device)
-            query_key_vector_sum.scatter_add_(dim=3,index=buckets_for_scatter,src=query_key_vectors.unsqueeze(2).expand(-1,-1,self.num_hashes,-1,-1))
-            value_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=query_key_vectors.device)
-            value_vector_sum.scatter_add_(dim=3,index=buckets_for_scatter,src=value_vectors.unsqueeze(2).expand(-1,-1,self.num_hashes,-1,-1))
-            # 计算每个桶中的向量数量
-            bucket_counts = buckets_one_hot.transpose(-1,-2).sum(-1) 
-            bucket_counts = bucket_counts.reshape(batch_size, self.num_attention_heads, self.num_hashes, self.num_buckets)
-            bucket_counts_sum = torch.sum(bucket_counts, dim=-1) 
-            expected = torch.full(bucket_counts_sum.shape, fill_value = sequence_length, dtype=torch.float, device=bucket_counts_sum.device)
-            assert torch.allclose(bucket_counts_sum, expected), f"bucket_counts_sum = {bucket_counts_sum}, expected = {expected}"
-            # 避免除以 0
-            bucket_counts = torch.where(bucket_counts > 0, bucket_counts, torch.ones_like(bucket_counts)) # shape: (batch_size, num_attention_heads, num_buckets*num_hashes)
-            # 计算每个桶中向量的平均值
-            query_key_vectors_mean = query_key_vector_sum / bucket_counts.unsqueeze(-1) # shape: (batch_size, num_attention_heads, num_hashes, num_buckets, attention_head_size)
-            value_vectors_mean = value_vector_sum / bucket_counts.unsqueeze(-1) # shape: (batch_size, num_attention_heads, num_hashes, num_buckets, attention_head_size)
-            del query_key_vector_sum, value_vector_sum, bucket_counts
-            sqrt_num = np.sqrt(self.attention_head_size)
-            key_vectors_level_1 = self._len_and_dim_norm(query_key_vectors_mean, sqrt_num)
-            query_vectors_level_1 = query_key_vectors_mean
-            attention_level_1 = query_vectors_level_1 @ key_vectors_level_1.transpose(-1,-2) # shape: (batch_size, num_attention_heads, num_hashes, num_buckets, num_buckets)
-            attention_level_1 = attention_level_1 / np.sqrt(self.attention_head_size)
-            out_level_1 = attention_level_1 @ value_vectors_mean 
-            assert not torch.isnan(out_level_1).any(), "out_level_1 has NaNs"
-            del attention_level_1,expected
-            # 准备gather到和query_key_vector相同维度去
-            query_key_vector_basic = torch.gather(input=query_key_vectors_mean,dim=3,index=buckets_for_scatter)
-            out_vectors_basic = torch.gather(input=out_level_1,dim=3,index=buckets_for_scatter)
-            del query_key_vectors_mean, value_vectors_mean, out_level_1
+                # 使用 mask 来选择每个桶中的向量，并计算它们的和
+                buckets_for_scatter =  buckets_per_hash.reshape(batch_size, self.num_attention_heads, num_hashes, sequence_length).unsqueeze(-1).expand(-1,-1,-1,-1,self.attention_head_size) # shape: (batch_size, num_attention_heads, num_hashes , seq_len, attention_head_size)
+                query_key_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=query_key_vectors.device)
+                query_key_vector_sum.scatter_add_(dim=3,index=buckets_for_scatter,src=query_key_vectors.unsqueeze(2).expand(-1,-1,self.num_hashes,-1,-1))
+                value_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=query_key_vectors.device)
+                value_vector_sum.scatter_add_(dim=3,index=buckets_for_scatter,src=value_vectors.unsqueeze(2).expand(-1,-1,self.num_hashes,-1,-1))
+                # 计算每个桶中的向量数量
+                bucket_counts = buckets_one_hot.transpose(-1,-2).sum(-1) 
+                bucket_counts = bucket_counts.reshape(batch_size, self.num_attention_heads, self.num_hashes, self.num_buckets)
+                bucket_counts_sum = torch.sum(bucket_counts, dim=-1) 
+                expected = torch.full(bucket_counts_sum.shape, fill_value = sequence_length, dtype=torch.float, device=bucket_counts_sum.device)
+                assert torch.allclose(bucket_counts_sum, expected), f"bucket_counts_sum = {bucket_counts_sum}, expected = {expected}"
+                # 避免除以 0
+                bucket_counts = torch.where(bucket_counts > 0, bucket_counts, torch.ones_like(bucket_counts)) # shape: (batch_size, num_attention_heads, num_buckets*num_hashes)
+                # 计算每个桶中向量的平均值
+                query_key_vectors_mean = query_key_vector_sum / bucket_counts.unsqueeze(-1) # shape: (batch_size, num_attention_heads, num_hashes, num_buckets, attention_head_size)
+                value_vectors_mean = value_vector_sum / bucket_counts.unsqueeze(-1) # shape: (batch_size, num_attention_heads, num_hashes, num_buckets, attention_head_size)
+                del query_key_vector_sum, value_vector_sum, bucket_counts
+                sqrt_num = np.sqrt(self.attention_head_size)
+                key_vectors_level_1 = self._len_and_dim_norm(query_key_vectors_mean, sqrt_num)
+                query_vectors_level_1 = query_key_vectors_mean
+                attention_level_1 = query_vectors_level_1 @ key_vectors_level_1.transpose(-1,-2) # shape: (batch_size, num_attention_heads, num_hashes, num_buckets, num_buckets)
+                attention_level_1 = attention_level_1 / np.sqrt(self.attention_head_size)
+                out_level_1 = attention_level_1 @ value_vectors_mean 
+                assert not torch.isnan(out_level_1).any(), "out_level_1 has NaNs"
+                del attention_level_1,expected
+                # 准备gather到和query_key_vector相同维度去
+                query_key_vector_basic = torch.gather(input=query_key_vectors_mean,dim=3,index=buckets_for_scatter)
+                out_vectors_basic = torch.gather(input=out_level_1,dim=3,index=buckets_for_scatter)
+                del query_key_vectors_mean, value_vectors_mean, out_level_1
 
             # make sure bucket idx is not longer then sequence length,这里利用索引模之后还是对应同一个向量
             sorted_bucket_idx_per_hash = sorted_bucket_idx % sequence_length
-            # 按照sorted_bucket_idx排序
-            index_for_gather_level_1 = sorted_bucket_idx_per_hash.reshape(batch_size,self.num_attention_heads,num_hashes,sequence_length).unsqueeze(-1).expand(-1,-1,-1,-1,self.attention_head_size)
-            query_key_vector_basic_sorted = torch.gather(input=query_key_vector_basic,dim=3,index=index_for_gather_level_1)
-            out_vectors_basic_sorted = torch.gather(input=out_vectors_basic,dim=3,index=index_for_gather_level_1)
-            query_key_vector_basic_sorted = query_key_vector_basic_sorted.reshape(batch_size,self.num_attention_heads,num_hashes*sequence_length,self.attention_head_size)
-            out_vectors_basic_sorted = out_vectors_basic_sorted.reshape(batch_size,self.num_attention_heads,num_hashes*sequence_length,self.attention_head_size)
-            assert not torch.isnan(out_vectors_basic_sorted).any(), "Vector contains NaN values"
+            if self.whether_use_tree_attention:
+                # 按照sorted_bucket_idx排序
+                index_for_gather_level_1 = sorted_bucket_idx_per_hash.reshape(batch_size,self.num_attention_heads,num_hashes,sequence_length).unsqueeze(-1).expand(-1,-1,-1,-1,self.attention_head_size)
+                query_key_vector_basic_sorted = torch.gather(input=query_key_vector_basic,dim=3,index=index_for_gather_level_1)
+                out_vectors_basic_sorted = torch.gather(input=out_vectors_basic,dim=3,index=index_for_gather_level_1)
+                query_key_vector_basic_sorted = query_key_vector_basic_sorted.reshape(batch_size,self.num_attention_heads,num_hashes*sequence_length,self.attention_head_size)
+                out_vectors_basic_sorted = out_vectors_basic_sorted.reshape(batch_size,self.num_attention_heads,num_hashes*sequence_length,self.attention_head_size)
+                assert not torch.isnan(out_vectors_basic_sorted).any(), "Vector contains NaN values"
             # cluster query key value vectors according to hashed buckets # 这里就是排序拿
             query_key_vectors = self._gather_by_expansion(query_key_vectors, sorted_bucket_idx_per_hash, num_hashes) #[batch_size, num_attention_heads, num_hashes * sequence_length, attention_head_size]
             value_vectors = self._gather_by_expansion(value_vectors, sorted_bucket_idx_per_hash, num_hashes)
             
-            # 计算delta,这里QK该不该计算delta？
-            # query_key_vectors = query_key_vectors - query_key_vector_basic_sorted
-            value_vectors = value_vectors - out_vectors_basic_sorted
+            if self.whether_use_tree_attention:
+                # 计算delta,这里QK该不该计算delta？
+                # query_key_vectors = query_key_vectors - query_key_vector_basic_sorted
+                value_vectors = value_vectors - out_vectors_basic_sorted
 
             query_key_vectors = self._split_seq_length_dim_to( # 分chunk
                 query_key_vectors,
@@ -586,8 +591,9 @@ class LSHSelfAttention(nn.Module, EfficientAttentionMixin):
             do_standard_self_attention=do_standard_self_attention,
             do_cached_attention=do_cached_attention,
         )
-        # add basic
-        out_vectors = out_vectors + out_vectors_basic_sorted
+        if self.whether_use_tree_attention:
+            # add basic
+            out_vectors = out_vectors + out_vectors_basic_sorted
         # free memory
         del key_vectors, value_vectors
 
