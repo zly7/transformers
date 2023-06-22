@@ -320,7 +320,7 @@ class ModelOutput(OrderedDict):
             return self.to_tuple()[k]
 
     def __setattr__(self, name, value):
-        if name in self.keys() and value is not None:
+        if name in super().keys() and value is not None:
             # Don't call self.__setitem__ to avoid recursion errors
             super().__setitem__(name, value)
         super().__setattr__(name, value)
@@ -336,6 +336,9 @@ class ModelOutput(OrderedDict):
         Convert self to a tuple containing all the attributes/keys that are not `None`.
         """
         return tuple(self[k] for k in self.keys())
+    
+    def keys(self):
+        return super().keys()
 
 
 class ExplicitEnum(str, Enum):
