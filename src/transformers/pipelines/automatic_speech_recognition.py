@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Dict, Optional, Union
 import numpy as np
 import requests
 
-from ..utils import is_torch_available, logging
+from ..utils import is_torch_available, is_torchaudio_available, logging
 from .audio_utils import ffmpeg_read
 from .base import ChunkPipeline
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 if is_torch_available():
-    from ..models.auto.modeling_auto import MODEL_FOR_CTC_MAPPING, MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING
+    from ..models.auto.modeling_auto import MODEL_FOR_CTC_MAPPING_NAMES, MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING_NAMES
 
 
 def rescale_stride(stride, ratio):
@@ -205,7 +205,7 @@ class AutomaticSpeechRecognitionPipeline(ChunkPipeline):
 
         if self.model.config.model_type == "whisper":
             self.type = "seq2seq_whisper"
-        elif self.model.__class__ in MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING.values():
+        elif self.model.__class__.__name__ in MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING_NAMES.values():
             self.type = "seq2seq"
         elif (
             feature_extractor._processor_class
@@ -220,7 +220,9 @@ class AutomaticSpeechRecognitionPipeline(ChunkPipeline):
         if self.framework == "tf":
             raise ValueError("The AutomaticSpeechRecognitionPipeline is only available in PyTorch.")
 
-        self.check_model_type(dict(MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING.items() + MODEL_FOR_CTC_MAPPING.items()))
+        mapping = MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING_NAMES.copy()
+        mapping.update(MODEL_FOR_CTC_MAPPING_NAMES)
+        self.check_model_type(mapping)
 
     def __call__(
         self,
@@ -349,7 +351,14 @@ class AutomaticSpeechRecognitionPipeline(ChunkPipeline):
             inputs = _inputs
             if in_sampling_rate != self.feature_extractor.sampling_rate:
                 import torch
-                from torchaudio import functional as F
+
+                if is_torchaudio_available():
+                    from torchaudio import functional as F
+                else:
+                    raise ImportError(
+                        "torchaudio is required to resample audio samples in AutomaticSpeechRecognitionPipeline. "
+                        "The torchaudio package can be installed through: `pip install torchaudio`."
+                    )
 
                 inputs = F.resample(
                     torch.from_numpy(inputs), in_sampling_rate, self.feature_extractor.sampling_rate

@@ -34,7 +34,6 @@ from ...pytorch_utils import (
     find_pruneable_heads_and_indices,
     is_torch_greater_or_equal_than_1_12,
     prune_linear_layer,
-    torch_custom_checkpointing,
 )
 from ...utils import (
     ModelOutput,
@@ -654,7 +653,7 @@ class TapasEncoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     hidden_states,
                     attention_mask,
@@ -999,7 +998,6 @@ class TapasModel(TapasPreTrainedModel):
 
 @add_start_docstrings("""Tapas Model with a `language modeling` head on top.""", TAPAS_START_DOCSTRING)
 class TapasForMaskedLM(TapasPreTrainedModel):
-    _keys_to_ignore_on_load_missing = ["cls.predictions.decoder.weight", "cls.predictions.decoder.bias"]
     _tied_weights_keys = ["cls.predictions.decoder.weight", "cls.predictions.decoder.bias"]
     config_class = TapasConfig
     base_model_prefix = "tapas"

@@ -15,6 +15,7 @@
 # limitations under the License.
 import collections
 import gc
+import importlib.metadata
 import inspect
 import json
 import os
@@ -73,7 +74,7 @@ from .utils import (
     replace_return_docstrings,
 )
 from .utils.hub import convert_file_size_to_int, get_checkpoint_shard_files
-from .utils.import_utils import ENV_VARS_TRUE_VALUES, importlib_metadata, is_sagemaker_mp_enabled
+from .utils.import_utils import ENV_VARS_TRUE_VALUES, is_sagemaker_mp_enabled
 from .utils.quantization_config import BitsAndBytesConfig
 from .utils.versions import require_version_core
 
@@ -305,7 +306,12 @@ def shard_checkpoint(
     storage_id_to_block = {}
 
     for key, weight in state_dict.items():
-        storage_id = id_tensor_storage(weight)
+        # when bnb serialization is used the weights in the state dict can be strings
+        # check: https://github.com/huggingface/transformers/pull/24416 for more details
+        if isinstance(weight, str):
+            continue
+        else:
+            storage_id = id_tensor_storage(weight)
 
         # If a `weight` shares the same underlying storage as another tensor, we put `weight` in the same `block`
         if storage_id in storage_id_to_block:
@@ -315,8 +321,9 @@ def shard_checkpoint(
 
         weight_size = weight.numel() * dtype_byte_size(weight.dtype)
 
-        # If this weight is going to tip up over the maximal size, we split.
-        if last_block_size + weight_size > max_shard_size:
+        # If this weight is going to tip up over the maximal size, we split, but only if we have put at least one
+        # weight in the current shard.
+        if last_block_size + weight_size > max_shard_size and len(sharded_state_dicts[-1]) > 0:
             sharded_state_dicts.append({})
             last_block_size = 0
 
@@ -450,7 +457,11 @@ def load_state_dict(checkpoint_file: Union[str, os.PathLike]):
             )
         return safe_load_file(checkpoint_file)
     try:
-        return torch.load(checkpoint_file, map_location="cpu")
+        if is_deepspeed_zero3_enabled() and torch.distributed.is_initialized() and torch.distributed.get_rank() > 0:
+            map_location = "meta"
+        else:
+            map_location = "cpu"
+        return torch.load(checkpoint_file, map_location=map_location)
     except Exception as e:
         try:
             with open(checkpoint_file) as f:
@@ -1693,8 +1704,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 Whether to save the model using `safetensors` or the traditional PyTorch way (that uses `pickle`).
             variant (`str`, *optional*):
                 If specified, weights are saved in the format pytorch_model.<variant>.bin.
-
-            kwargs:
+            kwargs (`Dict[str, Any]`, *optional*):
                 Additional key word arguments passed along to the [`~utils.PushToHubMixin.push_to_hub`] method.
         """
         # Checks if the model has been loaded in 8-bit
@@ -2197,7 +2207,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             use_safetensors = False
 
         if is_bitsandbytes_available():
-            is_8bit_serializable = version.parse(importlib_metadata.version("bitsandbytes")) > version.parse("0.37.2")
+            is_8bit_serializable = version.parse(importlib.metadata.version("bitsandbytes")) > version.parse("0.37.2")
         else:
             is_8bit_serializable = False
 
@@ -2732,7 +2742,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
 
                 modules_to_not_convert.extend(keys_on_cpu)
 
-            supports_4bit = version.parse(importlib_metadata.version("bitsandbytes")) >= version.parse("0.39.0")
+            supports_4bit = version.parse(importlib.metadata.version("bitsandbytes")) >= version.parse("0.39.0")
 
             if load_in_4bit and not supports_4bit:
                 raise ValueError(
@@ -2745,7 +2755,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             )
             # training in 8-bit is only available in 0.37.0+
             model._is_quantized_training_enabled = version.parse(
-                importlib_metadata.version("bitsandbytes")
+                importlib.metadata.version("bitsandbytes")
             ) >= version.parse("0.37.0")
 
             model.config.quantization_config = quantization_config
@@ -2780,7 +2790,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             target_dtype = torch_dtype
 
             if load_in_4bit:
-                if version.parse(importlib_metadata.version("accelerate")) > version.parse("0.19.0"):
+                if version.parse(importlib.metadata.version("accelerate")) > version.parse("0.19.0"):
                     from accelerate.utils import CustomDtype
 
                     target_dtype = CustomDtype.INT4
@@ -3039,15 +3049,30 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             expected_keys = [".".join([prefix, s]) for s in expected_keys]
 
         missing_keys = list(set(expected_keys) - set(loaded_keys))
-        unexpected_keys = list(set(loaded_keys) - set(expected_keys))
+        unexpected_keys = set(loaded_keys) - set(expected_keys)
+        # Remove nonpersistent buffers from unexpected keys: they are not in the state dict but will be in the model
+        # buffers
+        model_buffers = {n for n, _ in model.named_buffers()}
+        if remove_prefix_from_model:
+            model_buffers = {key[len(_prefix) :] if key.startswith(_prefix) else key for key in model_buffers}
+        elif add_prefix_to_model:
+            model_buffers = {".".join([prefix, key]) for key in model_buffers}
+        unexpected_keys = list(unexpected_keys - model_buffers)
 
-        if is_accelerate_available():
-            model.tie_weights()
-            tied_params = find_tied_parameters(model)
-        else:
-            tied_params = []
+        model.tie_weights()
+        ptrs = collections.defaultdict(list)
+        for name, tensor in model.state_dict().items():
+            id_tensor = id_tensor_storage(tensor) if tensor.device != torch.device("meta") else id(tensor)
+            ptrs[id_tensor].append(name)
+
+        # These are all the pointers of shared tensors.
+        tied_params = [names for _, names in ptrs.items() if len(names) > 1]
 
         for group in tied_params:
+            if remove_prefix_from_model:
+                group = [key[len(_prefix) :] if key.startswith(_prefix) else key for key in group]
+            elif add_prefix_to_model:
+                group = [".".join([prefix, key]) for key in group]
             missing_in_group = [k for k in missing_keys if k in group]
             if len(missing_in_group) > 0 and len(missing_in_group) < len(group):
                 missing_keys = [k for k in missing_keys if k not in missing_in_group]
@@ -3136,6 +3161,9 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             mismatched_keys = []
             if ignore_mismatched_sizes:
                 for checkpoint_key in loaded_keys:
+                    # If the checkpoint is sharded, we may not have the key here.
+                    if checkpoint_key not in state_dict:
+                        continue
                     model_key = checkpoint_key
                     if remove_prefix_from_model:
                         # The model key starts with `prefix` but `checkpoint_key` doesn't so we add it.
@@ -3454,6 +3482,36 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         from optimum.bettertransformer import BetterTransformer
 
         return BetterTransformer.reverse(self)
+
+    def warn_if_padding_and_no_attention_mask(self, input_ids, attention_mask):
+        """
+        Shows a one-time warning if the input_ids appear to contain padding and no attention mask was given.
+        """
+        if (attention_mask is not None) or (self.config.pad_token_id is None):
+            return
+
+        # Check only the first and last input IDs to reduce overhead.
+        if self.config.pad_token_id in input_ids[:, [-1, 0]]:
+            warn_string = (
+                "We strongly recommend passing in an `attention_mask` since your input_ids may be padded. See "
+                "https://huggingface.co/docs/transformers/troubleshooting"
+                "#incorrect-output-when-padding-tokens-arent-masked."
+            )
+
+            # If the pad token is equal to either BOS, EOS, or SEP, we do not know whether the user should use an
+            # attention_mask or not. In this case, we should still show a warning because this is a rare case.
+            if (
+                (self.config.bos_token_id is not None and self.config.bos_token_id == self.config.pad_token_id)
+                or (self.config.eos_token_id is not None and self.config.eos_token_id == self.config.pad_token_id)
+                or (self.config.sep_token_id is not None and self.config.sep_token_id == self.config.pad_token_id)
+            ):
+                warn_string += (
+                    f"\nYou may ignore this warning if your `pad_token_id` ({self.config.pad_token_id}) is identical "
+                    f"to the `bos_token_id` ({self.config.bos_token_id}), `eos_token_id` ({self.config.eos_token_id}), "
+                    f"or the `sep_token_id` ({self.config.sep_token_id}), and your input is not padded."
+                )
+
+            logger.warning_once(warn_string)
 
 
 PreTrainedModel.push_to_hub = copy_func(PreTrainedModel.push_to_hub)

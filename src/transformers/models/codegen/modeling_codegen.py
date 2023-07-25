@@ -24,7 +24,6 @@ from torch.nn import CrossEntropyLoss
 from ...activations import ACT2FN
 from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import torch_custom_checkpointing
 from ...utils import add_code_sample_docstrings, add_start_docstrings, add_start_docstrings_to_model_forward, logging
 from .configuration_codegen import CodeGenConfig
 
@@ -84,6 +83,7 @@ class CodeGenAttention(nn.Module):
             torch.tril(torch.ones((max_positions, max_positions), dtype=torch.bool)).view(
                 1, 1, max_positions, max_positions
             ),
+            persistent=False,
         )
 
         self.attn_dropout = nn.Dropout(config.attn_pdrop)
@@ -550,7 +550,7 @@ class CodeGenModel(CodeGenPreTrainedModel):
 
                     return custom_forward
 
-                outputs = torch_custom_checkpointing(
+                outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states,
                     None,
@@ -601,7 +601,6 @@ class CodeGenModel(CodeGenPreTrainedModel):
     CODEGEN_START_DOCSTRING,
 )
 class CodeGenForCausalLM(CodeGenPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.causal_mask"]
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):

@@ -34,7 +34,6 @@ from ...modeling_outputs import (
     TokenClassifierOutput,
 )
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import torch_custom_checkpointing
 from ...utils import add_code_sample_docstrings, add_start_docstrings, add_start_docstrings_to_model_forward, logging
 from .configuration_gpt_neo import GPTNeoConfig
 
@@ -146,8 +145,8 @@ class GPTNeoSelfAttention(nn.Module):
         if attention_type == "local":
             bias = torch.bitwise_xor(bias, torch.tril(bias, -config.window_size))
 
-        self.register_buffer("bias", bias)
-        self.register_buffer("masked_bias", torch.tensor(-1e9))
+        self.register_buffer("bias", bias, persistent=False)
+        self.register_buffer("masked_bias", torch.tensor(-1e9), persistent=False)
 
         self.attn_dropout = nn.Dropout(float(config.attention_dropout))
         self.resid_dropout = nn.Dropout(float(config.resid_dropout))
@@ -614,7 +613,7 @@ class GPTNeoModel(GPTNeoPreTrainedModel):
 
                     return custom_forward
 
-                outputs = torch_custom_checkpointing(
+                outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states,
                     None,
@@ -664,12 +663,6 @@ class GPTNeoModel(GPTNeoPreTrainedModel):
     GPT_NEO_START_DOCSTRING,
 )
 class GPTNeoForCausalLM(GPTNeoPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [
-        r"h\.\d+\.attn\.masked_bias",
-        r"lm_head.weight",
-        r"h\.\d+\.attn\.attention\.bias",
-    ]
-    _keys_to_ignore_on_save = [r"lm_head.weight"]
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
@@ -703,8 +696,7 @@ class GPTNeoForCausalLM(GPTNeoPreTrainedModel):
             position_ids.masked_fill_(attention_mask == 0, 1)
             if past_key_values:
                 position_ids = position_ids[:, -1].unsqueeze(-1)
-        else:
-            position_ids = None
+
         return {
             "input_ids": input_ids,
             "past_key_values": past_key_values,
@@ -821,8 +813,6 @@ class GPTNeoForCausalLM(GPTNeoPreTrainedModel):
     GPT_NEO_START_DOCSTRING,
 )
 class GPTNeoForSequenceClassification(GPTNeoPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.masked_bias", r"lm_head.weight"]
-
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
@@ -1026,8 +1016,6 @@ class GPTNeoForTokenClassification(GPTNeoPreTrainedModel):
     GPT_NEO_START_DOCSTRING,
 )
 class GPTNeoForQuestionAnswering(GPTNeoPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.masked_bias", r"h\.\d+\.attn\.bias", r"lm_head.weight"]
-
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels

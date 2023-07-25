@@ -43,7 +43,7 @@ from ...modeling_outputs import (
     TokenClassifierOutput,
 )
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import apply_chunking_to_forward, torch_custom_checkpointing
+from ...pytorch_utils import apply_chunking_to_forward
 from ...utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
@@ -114,7 +114,9 @@ class FNetEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
-        self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
+        self.register_buffer(
+            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        )
 
         self.register_buffer(
             "token_type_ids", torch.zeros(self.position_ids.size(), dtype=torch.long), persistent=False
@@ -297,7 +299,7 @@ class FNetEncoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(create_custom_forward(layer_module), hidden_states)
+                layer_outputs = torch.utils.checkpoint.checkpoint(create_custom_forward(layer_module), hidden_states)
             else:
                 layer_outputs = layer_module(hidden_states)
 
@@ -411,7 +413,6 @@ class FNetPreTrainedModel(PreTrainedModel):
     config_class = FNetConfig
     base_model_prefix = "fnet"
     supports_gradient_checkpointing = True
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     def _init_weights(self, module):
         """Initialize the weights"""
@@ -621,7 +622,6 @@ class FNetModel(FNetPreTrainedModel):
     FNET_START_DOCSTRING,
 )
 class FNetForPreTraining(FNetPreTrainedModel):
-    _keys_to_ignore_on_load_missing = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
     _tied_weights_keys = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config):
@@ -716,7 +716,6 @@ class FNetForPreTraining(FNetPreTrainedModel):
 
 @add_start_docstrings("""FNet Model with a `language modeling` head on top.""", FNET_START_DOCSTRING)
 class FNetForMaskedLM(FNetPreTrainedModel):
-    _keys_to_ignore_on_load_missing = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
     _tied_weights_keys = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config):

@@ -42,7 +42,7 @@ if is_torch_available():
 if is_vision_available():
     from PIL import Image
 
-    from transformers import ViTFeatureExtractor
+    from transformers import ViTImageProcessor
 
 
 class ViTMAEModelTester:
@@ -208,12 +208,6 @@ class ViTMAEModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_for_pretraining(*config_and_inputs)
 
-    @unittest.skip(
-        reason="The model does not support GC + autocast + fp16: https://github.com/huggingface/transformers/pull/24247"
-    )
-    def test_training_gradient_checkpointing_autocast(self):
-        pass
-
     # overwrite from common since ViTMAEForPretraining has random masking, we need to fix the noise
     # to generate masks during test
     def check_pt_tf_models(self, tf_model, pt_model, pt_inputs_dict):
@@ -285,6 +279,10 @@ class ViTMAEModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
     def test_model_outputs_equivalence(self):
         pass
 
+    @unittest.skip("Will be fixed soon by reducing the size of the model used for common tests.")
+    def test_model_is_small(self):
+        pass
+
     @slow
     def test_model_from_pretrained(self):
         for model_name in VIT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
@@ -302,8 +300,8 @@ def prepare_img():
 @require_vision
 class ViTMAEModelIntegrationTest(unittest.TestCase):
     @cached_property
-    def default_feature_extractor(self):
-        return ViTFeatureExtractor.from_pretrained("facebook/vit-mae-base") if is_vision_available() else None
+    def default_image_processor(self):
+        return ViTImageProcessor.from_pretrained("facebook/vit-mae-base") if is_vision_available() else None
 
     @slow
     def test_inference_for_pretraining(self):
@@ -312,9 +310,9 @@ class ViTMAEModelIntegrationTest(unittest.TestCase):
 
         model = ViTMAEForPreTraining.from_pretrained("facebook/vit-mae-base").to(torch_device)
 
-        feature_extractor = self.default_feature_extractor
+        image_processor = self.default_image_processor
         image = prepare_img()
-        inputs = feature_extractor(images=image, return_tensors="pt").to(torch_device)
+        inputs = image_processor(images=image, return_tensors="pt").to(torch_device)
 
         # prepare a noise vector that will be also used for testing the TF model
         # (this way we can ensure that the PT and TF models operate on the same inputs)
