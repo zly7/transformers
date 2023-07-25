@@ -36,12 +36,7 @@ from ...modeling_outputs import (
     TokenClassifierOutput,
 )
 from ...modeling_utils import PreTrainedModel, SequenceSummary
-from ...pytorch_utils import (
-    apply_chunking_to_forward,
-    find_pruneable_heads_and_indices,
-    prune_linear_layer,
-    torch_custom_checkpointing,
-)
+from ...pytorch_utils import apply_chunking_to_forward, find_pruneable_heads_and_indices, prune_linear_layer
 from ...utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
@@ -590,7 +585,7 @@ class RoFormerEncoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     hidden_states,
                     attention_mask,
@@ -701,11 +696,6 @@ class RoFormerPreTrainedModel(PreTrainedModel):
     load_tf_weights = load_tf_weights_in_roformer
     base_model_prefix = "roformer"
     supports_gradient_checkpointing = True
-    _keys_to_ignore_on_load_missing = []
-    _keys_to_ignore_on_load_unexpected = [
-        r"roformer.embeddings_project.weight",
-        r"roformer.embeddings_project.bias",
-    ]
 
     def _init_weights(self, module):
         """Initialize the weights"""
@@ -957,7 +947,6 @@ class RoFormerModel(RoFormerPreTrainedModel):
 
 @add_start_docstrings("""RoFormer Model with a `language modeling` head on top.""", ROFORMER_START_DOCSTRING)
 class RoFormerForMaskedLM(RoFormerPreTrainedModel):
-    _keys_to_ignore_on_load_missing = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
     _tied_weights_keys = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config):
@@ -1060,7 +1049,6 @@ class RoFormerForMaskedLM(RoFormerPreTrainedModel):
     """RoFormer Model with a `language modeling` head on top for CLM fine-tuning.""", ROFORMER_START_DOCSTRING
 )
 class RoFormerForCausalLM(RoFormerPreTrainedModel):
-    _keys_to_ignore_on_load_missing = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
     _tied_weights_keys = ["cls.predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config):

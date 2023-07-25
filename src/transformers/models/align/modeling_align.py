@@ -30,12 +30,7 @@ from ...modeling_outputs import (
     BaseModelOutputWithPoolingAndNoAttention,
 )
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import (
-    apply_chunking_to_forward,
-    find_pruneable_heads_and_indices,
-    prune_linear_layer,
-    torch_custom_checkpointing,
-)
+from ...pytorch_utils import apply_chunking_to_forward, find_pruneable_heads_and_indices, prune_linear_layer
 from ...utils import (
     ModelOutput,
     add_start_docstrings,
@@ -692,7 +687,9 @@ class AlignTextEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
-        self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
+        self.register_buffer(
+            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        )
         self.register_buffer(
             "token_type_ids", torch.zeros(self.position_ids.size(), dtype=torch.long), persistent=False
         )
@@ -1105,7 +1102,7 @@ class AlignTextEncoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     hidden_states,
                     attention_mask,
@@ -1181,7 +1178,6 @@ class AlignPreTrainedModel(PreTrainedModel):
     config_class = AlignConfig
     base_model_prefix = "align"
     supports_gradient_checkpointing = True
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     def _init_weights(self, module):
         """Initialize the weights"""
@@ -1448,7 +1444,7 @@ class AlignModel(AlignPreTrainedModel):
         self.vision_model = AlignVisionModel(vision_config)
 
         self.text_projection = nn.Linear(self.text_embed_dim, self.projection_dim)
-        self.temperature = nn.Parameter(torch.ones([]) * self.config.temperature_init_value)
+        self.temperature = nn.Parameter(torch.tensor(self.config.temperature_init_value))
 
         # Initialize weights and apply final processing
         self.post_init()

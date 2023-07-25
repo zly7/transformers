@@ -41,7 +41,7 @@ from ...file_utils import (
 )
 from ...modeling_outputs import BaseModelOutput
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import meshgrid, torch_custom_checkpointing
+from ...pytorch_utils import meshgrid
 from ...utils import is_ninja_available, logging
 from ..auto import AutoBackbone
 from .configuration_deformable_detr import DeformableDetrConfig
@@ -1380,7 +1380,7 @@ class DeformableDetrDecoder(DeformableDetrPreTrainedModel):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(decoder_layer),
                     hidden_states,
                     encoder_hidden_states,
@@ -1823,7 +1823,6 @@ class DeformableDetrModel(DeformableDetrPreTrainedModel):
 )
 class DeformableDetrForObjectDetection(DeformableDetrPreTrainedModel):
     # When using clones, all layers > 0 will be clones, but layer 0 *is* required
-    _keys_to_ignore_on_load_missing = [r"bbox_embed\.[1-9]\d*", r"class_embed\.[1-9]\d*"]
     _tied_weights_keys = [r"bbox_embed\.[1-9]\d*", r"class_embed\.[1-9]\d*"]
 
     def __init__(self, config: DeformableDetrConfig):

@@ -28,7 +28,6 @@ from ... import AutoBackbone
 from ...activations import ACT2FN
 from ...modeling_outputs import BaseModelOutput
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import torch_custom_checkpointing
 from ...utils import (
     ModelOutput,
     add_start_docstrings,
@@ -400,7 +399,7 @@ class OneFormerLoss(nn.Module):
         self.importance_sample_ratio = importance_sample_ratio
         self.contrastive_temperature = contrastive_temperature
         if self.contrastive_temperature is not None:
-            self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / contrastive_temperature))
+            self.logit_scale = nn.Parameter(torch.tensor(np.log(1 / contrastive_temperature)))
 
     def _max_by_axis(self, the_list: List[List[int]]) -> List[int]:
         maxes = the_list[0]
@@ -2620,7 +2619,7 @@ class OneFormerTextTransformer(nn.Module):
     def forward(self, hidden_states: torch.Tensor):
         for layer in self.layers:
             if self.use_checkpoint:
-                hidden_states = torch_custom_checkpointing(layer, hidden_states)
+                hidden_states = torch.utils.checkpoint.checkpoint(layer, hidden_states)
             else:
                 hidden_states = layer(hidden_states)
         return hidden_states

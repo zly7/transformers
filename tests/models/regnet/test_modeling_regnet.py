@@ -38,7 +38,7 @@ if is_torch_available():
 if is_vision_available():
     from PIL import Image
 
-    from transformers import AutoFeatureExtractor
+    from transformers import AutoImageProcessor
 
 
 class RegNetModelTester:
@@ -161,12 +161,6 @@ class RegNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
     def test_model_common_attributes(self):
         pass
 
-    @unittest.skip(
-        reason="The model does not support GC + autocast + fp16: https://github.com/huggingface/transformers/pull/24247"
-    )
-    def test_training_gradient_checkpointing_autocast(self):
-        pass
-
     def test_forward_signature(self):
         config, _ = self.model_tester.prepare_config_and_inputs_for_common()
 
@@ -254,9 +248,9 @@ def prepare_img():
 @require_vision
 class RegNetModelIntegrationTest(unittest.TestCase):
     @cached_property
-    def default_feature_extractor(self):
+    def default_image_processor(self):
         return (
-            AutoFeatureExtractor.from_pretrained(REGNET_PRETRAINED_MODEL_ARCHIVE_LIST[0])
+            AutoImageProcessor.from_pretrained(REGNET_PRETRAINED_MODEL_ARCHIVE_LIST[0])
             if is_vision_available()
             else None
         )
@@ -265,9 +259,9 @@ class RegNetModelIntegrationTest(unittest.TestCase):
     def test_inference_image_classification_head(self):
         model = RegNetForImageClassification.from_pretrained(REGNET_PRETRAINED_MODEL_ARCHIVE_LIST[0]).to(torch_device)
 
-        feature_extractor = self.default_feature_extractor
+        image_processor = self.default_image_processor
         image = prepare_img()
-        inputs = feature_extractor(images=image, return_tensors="pt").to(torch_device)
+        inputs = image_processor(images=image, return_tensors="pt").to(torch_device)
 
         # forward pass
         with torch.no_grad():

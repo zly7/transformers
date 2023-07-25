@@ -29,7 +29,6 @@ from torch.nn import LayerNorm
 from ...activations import ACT2FN
 from ...modeling_outputs import BaseModelOutput
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import torch_custom_checkpointing
 from ...utils import (
     ModelOutput,
     add_start_docstrings,
@@ -1357,7 +1356,7 @@ class XLMProphetNetEncoder(XLMProphetNetPreTrainedModel):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(encoder_layer),
                     hidden_states,
                     extended_attention_mask,
@@ -1601,7 +1600,7 @@ class XLMProphetNetDecoder(XLMProphetNetPreTrainedModel):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(decoder_layer),
                     hidden_states,
                     extended_attention_mask,
@@ -1769,7 +1768,6 @@ class XLMProphetNetDecoder(XLMProphetNetPreTrainedModel):
 )
 # Copied from transformers.models.prophetnet.modeling_prophetnet.ProphetNetModel with microsoft/prophetnet-large-uncased->patrickvonplaten/xprophetnet-large-uncased-standalone, ProphetNet->XLMProphetNet, PROPHETNET->XLM_PROPHETNET
 class XLMProphetNetModel(XLMProphetNetPreTrainedModel):
-    _keys_to_ignore_on_load_missing = ["decoder.word_embeddings.weight", "encoder.word_embeddings.weight"]
     _tied_weights_keys = ["encoder.word_embeddings.weight", "decoder.word_embeddings.weight"]
 
     def __init__(self, config: XLMProphetNetConfig):
@@ -1900,11 +1898,6 @@ class XLMProphetNetModel(XLMProphetNetPreTrainedModel):
 )
 # Copied from transformers.models.prophetnet.modeling_prophetnet.ProphetNetForConditionalGeneration with microsoft/prophetnet-large-uncased->patrickvonplaten/xprophetnet-large-uncased-standalone, ProphetNet->XLMProphetNet, PROPHETNET->XLM_PROPHETNET
 class XLMProphetNetForConditionalGeneration(XLMProphetNetPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [
-        "decoder.word_embeddings.weight",
-        "encoder.word_embeddings.weight",
-        "lm_head.weight",
-    ]
     _tied_weights_keys = ["encoder.word_embeddings.weight", "decoder.word_embeddings.weight", "lm_head.weight"]
 
     def __init__(self, config: XLMProphetNetConfig):
@@ -2120,7 +2113,6 @@ class XLMProphetNetForConditionalGeneration(XLMProphetNetPreTrainedModel):
 )
 # Copied from transformers.models.prophetnet.modeling_prophetnet.ProphetNetForCausalLM with microsoft/prophetnet-large-uncased->patrickvonplaten/xprophetnet-large-uncased-standalone, ProphetNet->XLMProphetNet, PROPHETNET->XLM_PROPHETNET
 class XLMProphetNetForCausalLM(XLMProphetNetPreTrainedModel):
-    _keys_to_ignore_on_load_missing = ["lm_head.weight"]
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config: XLMProphetNetConfig):

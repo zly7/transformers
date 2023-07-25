@@ -264,6 +264,9 @@ TF_MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING = None
 TF_MODEL_FOR_TABLE_QUESTION_ANSWERING_MAPPING = None
 
 
+TF_MODEL_FOR_TEXT_ENCODING_MAPPING = None
+
+
 TF_MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING = None
 
 
@@ -280,6 +283,13 @@ TF_MODEL_WITH_LM_HEAD_MAPPING = None
 
 
 class TFAutoModel(metaclass=DummyObject):
+    _backends = ["tf"]
+
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+
+class TFAutoModelForAudioClassification(metaclass=DummyObject):
     _backends = ["tf"]
 
     def __init__(self, *args, **kwargs):
@@ -307,7 +317,21 @@ class TFAutoModelForImageClassification(metaclass=DummyObject):
         requires_backends(self, ["tf"])
 
 
+class TFAutoModelForMaskedImageModeling(metaclass=DummyObject):
+    _backends = ["tf"]
+
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+
 class TFAutoModelForMaskedLM(metaclass=DummyObject):
+    _backends = ["tf"]
+
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+
+class TFAutoModelForMaskGeneration(metaclass=DummyObject):
     _backends = ["tf"]
 
     def __init__(self, *args, **kwargs):
@@ -371,6 +395,13 @@ class TFAutoModelForSpeechSeq2Seq(metaclass=DummyObject):
 
 
 class TFAutoModelForTableQuestionAnswering(metaclass=DummyObject):
+    _backends = ["tf"]
+
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+
+class TFAutoModelForTextEncoding(metaclass=DummyObject):
     _backends = ["tf"]
 
     def __init__(self, *args, **kwargs):

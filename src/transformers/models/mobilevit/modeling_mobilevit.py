@@ -33,7 +33,7 @@ from ...modeling_outputs import (
     SemanticSegmenterOutput,
 )
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer, torch_custom_checkpointing
+from ...pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
 from ...utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
@@ -633,7 +633,7 @@ class MobileViTEncoder(nn.Module):
 
                     return custom_forward
 
-                hidden_states = torch_custom_checkpointing(
+                hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     hidden_states,
                 )
@@ -1024,9 +1024,10 @@ class MobileViTForSemanticSegmentation(MobileViTPreTrainedModel):
         Examples:
 
         ```python
-        >>> from transformers import AutoImageProcessor, MobileViTForSemanticSegmentation
-        >>> from PIL import Image
         >>> import requests
+        >>> import torch
+        >>> from PIL import Image
+        >>> from transformers import AutoImageProcessor, MobileViTForSemanticSegmentation
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
         >>> image = Image.open(requests.get(url, stream=True).raw)

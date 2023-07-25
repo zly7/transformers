@@ -31,7 +31,7 @@ from ...modeling_outputs import (
     TokenClassifierOutput,
 )
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import apply_chunking_to_forward, torch_custom_checkpointing
+from ...pytorch_utils import apply_chunking_to_forward
 from ...utils import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
@@ -77,7 +77,9 @@ class LayoutLMv2Embeddings(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-        self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
+        self.register_buffer(
+            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        )
 
     def _calc_spatial_position_embeddings(self, bbox):
         try:
@@ -455,7 +457,7 @@ class LayoutLMv2Encoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     hidden_states,
                     attention_mask,
@@ -506,7 +508,6 @@ class LayoutLMv2PreTrainedModel(PreTrainedModel):
     config_class = LayoutLMv2Config
     pretrained_model_archive_map = LAYOUTLMV2_PRETRAINED_MODEL_ARCHIVE_LIST
     base_model_prefix = "layoutlmv2"
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     def _init_weights(self, module):
         """Initialize the weights"""
@@ -567,8 +568,11 @@ class LayoutLMv2VisualBackbone(nn.Module):
         self.register_buffer(
             "pixel_mean",
             torch.Tensor(self.cfg.MODEL.PIXEL_MEAN).view(num_channels, 1, 1),
+            persistent=False,
         )
-        self.register_buffer("pixel_std", torch.Tensor(self.cfg.MODEL.PIXEL_STD).view(num_channels, 1, 1))
+        self.register_buffer(
+            "pixel_std", torch.Tensor(self.cfg.MODEL.PIXEL_STD).view(num_channels, 1, 1), persistent=False
+        )
         self.out_feature_key = "p2"
         if torch.are_deterministic_algorithms_enabled():
             logger.warning("using `AvgPool2d` instead of `AdaptiveAvgPool2d`")

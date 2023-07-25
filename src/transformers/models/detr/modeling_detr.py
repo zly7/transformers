@@ -16,7 +16,6 @@
 
 
 import math
-import random
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -26,7 +25,6 @@ from torch import Tensor, nn
 from ...activations import ACT2FN
 from ...modeling_outputs import BaseModelOutput, BaseModelOutputWithCrossAttentions, Seq2SeqModelOutput
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import torch_custom_checkpointing
 from ...utils import (
     ModelOutput,
     add_start_docstrings,
@@ -644,7 +642,7 @@ class DetrEncoderLayer(nn.Module):
     ):
         """
         Args:
-            hidden_states (`torch.FloatTensor`): input to the layer of shape `(seq_len, batch, embed_dim)`
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
             attention_mask (`torch.FloatTensor`): attention mask of size
                 `(batch, 1, target_len, source_len)` where padding elements are indicated by very large negative
                 values.
@@ -725,7 +723,7 @@ class DetrDecoderLayer(nn.Module):
     ):
         """
         Args:
-            hidden_states (`torch.FloatTensor`): input to the layer of shape `(seq_len, batch, embed_dim)`
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
             attention_mask (`torch.FloatTensor`): attention mask of size
                 `(batch, 1, target_len, source_len)` where padding elements are indicated by very large negative
                 values.
@@ -736,7 +734,7 @@ class DetrDecoderLayer(nn.Module):
                 position embeddings that are added to the queries and keys
             in the self-attention layer.
             encoder_hidden_states (`torch.FloatTensor`):
-                cross attention input to the layer of shape `(seq_len, batch, embed_dim)`
+                cross attention input to the layer of shape `(batch, seq_len, embed_dim)`
             encoder_attention_mask (`torch.FloatTensor`): encoder attention mask of size
                 `(batch, 1, target_len, source_len)` where padding elements are indicated by very large negative
                 values.
@@ -980,8 +978,13 @@ class DetrEncoder(DetrPreTrainedModel):
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
-            dropout_probability = random.uniform(0, 1)
-            if self.training and (dropout_probability < self.layerdrop):  # skip the layer
+            to_drop = False
+            if self.training:
+                dropout_probability = torch.rand([])
+                if dropout_probability < self.layerdrop:  # skip the layer
+                    to_drop = True
+
+            if to_drop:
                 layer_outputs = (None, None)
             else:
                 # we add position_embeddings as extra input to the encoder_layer
@@ -1119,9 +1122,10 @@ class DetrDecoder(DetrPreTrainedModel):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-            dropout_probability = random.uniform(0, 1)
-            if self.training and (dropout_probability < self.layerdrop):
-                continue
+            if self.training:
+                dropout_probability = torch.rand([])
+                if dropout_probability < self.layerdrop:
+                    continue
 
             if self.gradient_checkpointing and self.training:
 
@@ -1131,7 +1135,7 @@ class DetrDecoder(DetrPreTrainedModel):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(decoder_layer),
                     hidden_states,
                     combined_attention_mask,
@@ -1787,13 +1791,13 @@ class DetrMaskHeadSmallConv(nn.Module):
         self.lay1 = nn.Conv2d(dim, dim, 3, padding=1)
         self.gn1 = nn.GroupNorm(8, dim)
         self.lay2 = nn.Conv2d(dim, inter_dims[1], 3, padding=1)
-        self.gn2 = nn.GroupNorm(8, inter_dims[1])
+        self.gn2 = nn.GroupNorm(min(8, inter_dims[1]), inter_dims[1])
         self.lay3 = nn.Conv2d(inter_dims[1], inter_dims[2], 3, padding=1)
-        self.gn3 = nn.GroupNorm(8, inter_dims[2])
+        self.gn3 = nn.GroupNorm(min(8, inter_dims[2]), inter_dims[2])
         self.lay4 = nn.Conv2d(inter_dims[2], inter_dims[3], 3, padding=1)
-        self.gn4 = nn.GroupNorm(8, inter_dims[3])
+        self.gn4 = nn.GroupNorm(min(8, inter_dims[3]), inter_dims[3])
         self.lay5 = nn.Conv2d(inter_dims[3], inter_dims[4], 3, padding=1)
-        self.gn5 = nn.GroupNorm(8, inter_dims[4])
+        self.gn5 = nn.GroupNorm(min(8, inter_dims[4]), inter_dims[4])
         self.out_lay = nn.Conv2d(inter_dims[4], 1, 3, padding=1)
 
         self.dim = dim

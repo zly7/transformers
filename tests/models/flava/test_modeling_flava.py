@@ -92,7 +92,7 @@ class FlavaImageModelTester:
         num_channels=3,
         qkv_bias=True,
         mask_token=True,
-        vocab_size=8192,
+        vocab_size=99,
     ):
         self.parent = parent
         self.batch_size = batch_size
@@ -183,12 +183,6 @@ class FlavaImageModelTest(ModelTesterMixin, unittest.TestCase):
 
     def test_inputs_embeds(self):
         # FLAVA does not use inputs_embeds
-        pass
-
-    @unittest.skip(
-        reason="The model does not support GC + autocast + fp16: https://github.com/huggingface/transformers/pull/24247"
-    )
-    def test_training_gradient_checkpointing_autocast(self):
         pass
 
     def test_model_common_attributes(self):
@@ -343,7 +337,7 @@ class FlavaTextModelTester:
         is_training=True,
         use_input_mask=True,
         use_token_type_ids=True,
-        vocab_size=30522,
+        vocab_size=102,
         type_vocab_size=2,
         max_position_embeddings=512,
         position_embedding_type="absolute",
@@ -466,12 +460,6 @@ class FlavaTextModelTest(ModelTesterMixin, unittest.TestCase):
 
     def test_inputs_embeds(self):
         # FLAVA does not use inputs_embeds
-        pass
-
-    @unittest.skip(
-        reason="The model does not support GC + autocast + fp16: https://github.com/huggingface/transformers/pull/24247"
-    )
-    def test_training_gradient_checkpointing_autocast(self):
         pass
 
     # skip this test as FlavaTextModel has no base class and is
@@ -636,12 +624,6 @@ class FlavaMultimodalModelTest(ModelTesterMixin, unittest.TestCase):
     def test_save_load_fast_init_to_base(self):
         pass
 
-    @unittest.skip(
-        reason="The model does not support GC + autocast + fp16: https://github.com/huggingface/transformers/pull/24247"
-    )
-    def test_training_gradient_checkpointing_autocast(self):
-        pass
-
     @slow
     def test_model_from_pretrained(self):
         for model_name in FLAVA_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
@@ -650,11 +632,23 @@ class FlavaMultimodalModelTest(ModelTesterMixin, unittest.TestCase):
 
 
 class FlavaImageCodebookTester:
-    def __init__(self, parent, batch_size=12, image_size=112, num_channels=3):
+    def __init__(
+        self,
+        parent,
+        batch_size=12,
+        image_size=112,
+        num_channels=3,
+        hidden_size=32,
+        num_groups=2,
+        vocab_size=99,
+    ):
         self.parent = parent
         self.batch_size = batch_size
         self.image_size = image_size
         self.num_channels = num_channels
+        self.hidden_size = hidden_size
+        self.num_groups = num_groups
+        self.vocab_size = vocab_size
 
     def prepare_config_and_inputs(self):
         pixel_values = floats_tensor([self.batch_size, self.num_channels, self.image_size, self.image_size])
@@ -663,7 +657,9 @@ class FlavaImageCodebookTester:
         return config, pixel_values
 
     def get_config(self):
-        return FlavaImageCodebookConfig()
+        return FlavaImageCodebookConfig(
+            hidden_size=self.hidden_size, num_groups=self.num_groups, vocab_size=self.vocab_size
+        )
 
     def create_and_check_model(self, config, pixel_values):
         model = FlavaImageCodebook(config=config)
@@ -747,12 +743,6 @@ class FlavaImageCodebookTest(ModelTesterMixin, unittest.TestCase):
     # skip this test as FlavaImageCodebook has no base class and is
     # not available in MODEL_MAPPING
     def test_save_load_fast_init_to_base(self):
-        pass
-
-    @unittest.skip(
-        reason="The model does not support GC + autocast + fp16: https://github.com/huggingface/transformers/pull/24247"
-    )
-    def test_training_gradient_checkpointing_autocast(self):
         pass
 
     @slow
@@ -988,7 +978,27 @@ class FlavaModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
             # Non persistent buffers won't be in original state dict
             loaded_model_state_dict.pop("text_model.embeddings.token_type_ids", None)
 
+            non_persistent_buffers = {}
+            for key in loaded_model_state_dict.keys():
+                if key not in model_state_dict.keys():
+                    non_persistent_buffers[key] = loaded_model_state_dict[key]
+
+            loaded_model_state_dict = {
+                key: value for key, value in loaded_model_state_dict.items() if key not in non_persistent_buffers
+            }
+
             self.assertEqual(set(model_state_dict.keys()), set(loaded_model_state_dict.keys()))
+
+            model_buffers = list(model.buffers())
+            for non_persistent_buffer in non_persistent_buffers.values():
+                found_buffer = False
+                for i, model_buffer in enumerate(model_buffers):
+                    if torch.equal(non_persistent_buffer, model_buffer):
+                        found_buffer = True
+                        break
+
+                self.assertTrue(found_buffer)
+                model_buffers.pop(i)
 
             models_equal = True
             for layer_name, p1 in model_state_dict.items():
@@ -1179,12 +1189,6 @@ class FlavaForPreTrainingTest(FlavaModelTest):
     all_model_classes = (FlavaForPreTraining,) if is_torch_available() else ()
     class_for_tester = FlavaForPreTrainingTester
     test_torchscript = False
-
-    @unittest.skip(
-        reason="The model does not support GC + autocast + fp16: https://github.com/huggingface/transformers/pull/24247"
-    )
-    def test_training_gradient_checkpointing_autocast(self):
-        pass
 
 
 # We will verify our results on an image of cute cats

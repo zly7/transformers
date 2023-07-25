@@ -26,7 +26,7 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from ...activations import ACT2FN, gelu
 from ...modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
 from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import apply_chunking_to_forward, torch_custom_checkpointing
+from ...pytorch_utils import apply_chunking_to_forward
 from ...utils import (
     ModelOutput,
     add_code_sample_docstrings,
@@ -795,7 +795,7 @@ class LukeEncoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     word_hidden_states,
                     entity_hidden_states,
@@ -1022,8 +1022,6 @@ LUKE_INPUTS_DOCSTRING = r"""
     LUKE_START_DOCSTRING,
 )
 class LukeModel(LukePreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
     def __init__(self, config: LukeConfig, add_pooling_layer: bool = True):
         super().__init__(config)
         self.config = config
@@ -1278,17 +1276,6 @@ class LukeLMHead(nn.Module):
     LUKE_START_DOCSTRING,
 )
 class LukeForMaskedLM(LukePreTrainedModel):
-    _keys_to_ignore_on_save = [
-        r"lm_head.decoder.weight",
-        r"lm_head.decoder.bias",
-        r"entity_predictions.decoder.weight",
-    ]
-    _keys_to_ignore_on_load_missing = [
-        r"position_ids",
-        r"lm_head.decoder.weight",
-        r"lm_head.decoder.bias",
-        r"entity_predictions.decoder.weight",
-    ]
     _tied_weights_keys = ["lm_head.decoder.weight", "lm_head.decoder.bias", "entity_predictions.decoder.weight"]
 
     def __init__(self, config):

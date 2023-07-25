@@ -30,8 +30,7 @@ from ...modeling_outputs import (
     SequenceClassifierOutput,
     TokenClassifierOutput,
 )
-from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer, torch_custom_checkpointing
+from ...modeling_utils import PreTrainedModel, find_pruneable_heads_and_indices, prune_linear_layer
 from ...utils import logging
 from .configuration_esm import EsmConfig
 
@@ -179,7 +178,9 @@ class EsmEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
-        self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
+        self.register_buffer(
+            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        )
 
         self.padding_idx = config.pad_token_id
         self.position_embeddings = nn.Embedding(
@@ -611,7 +612,7 @@ class EsmEncoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch_custom_checkpointing(
+                layer_outputs = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     hidden_states,
                     attention_mask,
@@ -784,7 +785,6 @@ class EsmModel(EsmPreTrainedModel):
     `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
     """
 
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
     supports_gradient_checkpointing = False
 
     def __init__(self, config, add_pooling_layer=True):
@@ -961,8 +961,6 @@ class EsmModel(EsmPreTrainedModel):
 
 @add_start_docstrings("""ESM Model with a `language modeling` head on top.""", ESM_START_DOCSTRING)
 class EsmForMaskedLM(EsmPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids", "lm_head.decoder.weight"]
-    _keys_to_ignore_on_load_unexpected = [r"pooler"]
     _tied_weights_keys = ["lm_head.decoder.weight"]
 
     def __init__(self, config):
@@ -1082,8 +1080,6 @@ class EsmLMHead(nn.Module):
     ESM_START_DOCSTRING,
 )
 class EsmForSequenceClassification(EsmPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
@@ -1178,9 +1174,6 @@ class EsmForSequenceClassification(EsmPreTrainedModel):
     ESM_START_DOCSTRING,
 )
 class EsmForTokenClassification(EsmPreTrainedModel):
-    _keys_to_ignore_on_load_unexpected = [r"pooler"]
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
