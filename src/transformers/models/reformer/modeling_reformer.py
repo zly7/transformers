@@ -489,13 +489,13 @@ class LSHSelfAttention(nn.Module, EfficientAttentionMixin):
                 buckets_per_hash = buckets % self.num_buckets 
                 # 使用 one-hot encoding 来创建一个 mask，它的形状与 query_key_vectors 和 value_vectors 相同，
                 # 并且在每个桶中的位置为 1，在其他位置为 0,todo:下面这个有问题
-                buckets_one_hot = nn.functional.one_hot(buckets, num_classes=buckets.max().item() + 1).to(torch.float32)  # shape: (batch_size, num_attention_heads, num_hashes, seq_len, num_buckets)
+                buckets_one_hot = nn.functional.one_hot(buckets, num_classes=self.num_buckets*self.num_hashes).to(torch.float32)  # shape: (batch_size, num_attention_heads, num_hashes, seq_len, num_buckets)
 
                 # 使用 mask 来选择每个桶中的向量，并计算它们的和
                 buckets_for_scatter =  buckets_per_hash.reshape(batch_size, self.num_attention_heads, num_hashes, sequence_length).unsqueeze(-1).expand(-1,-1,-1,-1,self.attention_head_size) # shape: (batch_size, num_attention_heads, num_hashes , seq_len, attention_head_size)
-                query_key_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=query_key_vectors.device)
+                query_key_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=query_key_vectors.device,dtype=query_key_vectors.dtype)
                 query_key_vector_sum.scatter_add_(dim=3,index=buckets_for_scatter,src=query_key_vectors.unsqueeze(2).expand(-1,-1,self.num_hashes,-1,-1))
-                value_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=query_key_vectors.device)
+                value_vector_sum = torch.zeros(size=(batch_size,self.num_attention_heads, self.num_hashes,self.num_buckets ,self.attention_head_size),device=value_vectors.device,dtype=value_vectors.dtype)
                 value_vector_sum.scatter_add_(dim=3,index=buckets_for_scatter,src=value_vectors.unsqueeze(2).expand(-1,-1,self.num_hashes,-1,-1))
                 # 计算每个桶中的向量数量
                 bucket_counts = buckets_one_hot.transpose(-1,-2).sum(-1) 
