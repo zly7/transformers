@@ -537,8 +537,7 @@ class LSHSelfAttention(nn.Module, EfficientAttentionMixin):
             value_vectors = self._gather_by_expansion(value_vectors, sorted_bucket_idx_per_hash, num_hashes)
             
             if self.whether_use_tree_attention:
-                # 计算delta,这里QK该不该计算delta？
-                # query_key_vectors = query_key_vectors - query_key_vector_basic_sorted
+                # 计算delta
                 value_vectors = value_vectors - out_vectors_basic_sorted
 
             query_key_vectors = self._split_seq_length_dim_to( # 分chunk
@@ -592,7 +591,7 @@ class LSHSelfAttention(nn.Module, EfficientAttentionMixin):
             do_cached_attention=do_cached_attention,
         )
         if self.whether_use_tree_attention:
-            # add basic
+            # add basic,把之前的vector_basic加回去
             out_vectors = out_vectors + out_vectors_basic_sorted
         # free memory
         del key_vectors, value_vectors
